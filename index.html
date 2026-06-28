@@ -1,31 +1,1415 @@
-function parseDate(s){
-  if(!s||s==='-'||String(s).trim()==='') return null;
-  if(s instanceof Date){var d2=new Date(s);d2.setHours(0,0,0,0);return d2;}
-  s=String(s).trim();
-
-  // Only trust new Date() for unambiguous ISO format: YYYY-MM-DD or YYYY/MM/DD
-  // (4-digit year first). All other formats go straight to manual parsing
-  // so that DD-MM-YY (Indian standard like 01-06-26 = 1 June) is never
-  // mis-read as MM-DD-YY by the browser.
-  if(/^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/.test(s)){
-    var d=new Date(s);
-    if(!isNaN(d)){d.setHours(0,0,0,0);return d;}
-  }
-
-  var pts=s.split(/[\/\-\.]/);
-  if(pts.length===3){
-    var a=pts[0].trim(),b=pts[1].trim(),c2=pts[2].trim(),d;
-    if(a.length===4){
-      // YYYY-MM-DD
-      d=new Date(a+'-'+b.padStart(2,'0')+'-'+c2.padStart(2,'0'));
-    } else if(c2.length===4){
-      // DD-MM-YYYY
-      d=new Date(c2+'-'+b.padStart(2,'0')+'-'+a.padStart(2,'0'));
-    } else {
-      // DD-MM-YY  →  treat as 20YY (Indian standard: day first, then month)
-      d=new Date('20'+c2+'-'+b.padStart(2,'0')+'-'+a.padStart(2,'0'));
-    }
-    if(!isNaN(d)){d.setHours(0,0,0,0);return d;}
-  }
-  return null;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logistics Control Tower</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f5f5f5;--surface:#fff;--surface2:#fafafa;--surface3:#f0f0f0;
+  --text:#111;--text2:#555;--text3:#999;
+  --border:#e0e0e0;--border2:#ccc;
+  --green:#16a34a;--green2:#f0fdf4;
+  --red:#dc2626;--red2:#fef2f2;
+  --amber:#d97706;--amber2:#fffbeb;
+  --blue:#2563eb;--blue2:#eff6ff;
+  --purple:#7c3aed;--teal:#0f766e;
+  --r:4px;--r2:6px;
 }
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5}
+.page{max-width:1440px;margin:0 auto;padding:1rem 1rem 4rem}
+
+/* Topbar */
+.topbar{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
+.topbar h1{font-size:15px;font-weight:700;letter-spacing:-.2px}
+.topbar .sub{font-size:12px;color:var(--text3);margin-left:10px}
+.topbar-right{display:flex;gap:8px;align-items:center}
+.pill{font-size:11px;padding:2px 8px;border-radius:3px;background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+.pill.ok{background:var(--green2);color:var(--green)}
+
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:1rem 1.25rem;margin-bottom:.75rem}
+.card-title{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:.75rem}
+
+/* Tabs */
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:.75rem;gap:0}
+.tab{padding:6px 16px;font-size:12px;cursor:pointer;border:none;background:none;color:var(--text2);border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit;font-weight:500}
+.tab.active{color:var(--text);border-bottom-color:var(--text)}
+.tab-panel{display:none}.tab-panel.active{display:block}
+.drop-area{border:1px dashed var(--border2);border-radius:var(--r2);padding:2rem 1rem;text-align:center;cursor:pointer;position:relative;background:var(--surface2)}
+.drop-area:hover,.drop-area.drag{background:var(--blue2)}
+.drop-area input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-area strong{font-size:13px;display:block;margin-bottom:.25rem}
+.drop-area p{font-size:12px;color:var(--text3)}
+textarea.paste-box{width:100%;min-height:80px;font-size:12px;font-family:'Courier New',monospace;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:.5rem;outline:none;resize:vertical;color:var(--text)}
+
+/* Col mapping */
+.col-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:8px}
+.col-item label{font-size:10px;color:var(--text3);font-weight:600;display:block;margin-bottom:2px;text-transform:uppercase;letter-spacing:.3px}
+.col-item select{font-size:12px;padding:4px 6px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface);color:var(--text);width:100%}
+.date-range-hint{font-size:11px;color:var(--text3);margin-top:.5rem;padding:.4rem .6rem;background:var(--surface2);border-radius:var(--r);border:1px solid var(--border)}
+.date-range-hint.warn{background:var(--amber2);color:var(--amber)}
+
+/* Buttons */
+.btn{padding:6px 14px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface);color:var(--text);font-size:12px;cursor:pointer;font-family:inherit;font-weight:500}
+.btn:hover{background:var(--surface2)}
+.btn.primary{background:var(--text);color:#fff;border-color:var(--text)}
+.btn.primary:hover{background:#333}
+.btn.sm{padding:4px 10px;font-size:11px}
+.action-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}
+
+/* Progress */
+.prog-track{background:var(--border);border-radius:20px;height:3px;overflow:hidden;margin-bottom:.25rem}
+.prog-bar{height:3px;border-radius:20px;background:var(--text);width:0%;transition:width .15s}
+.prog-msg{font-size:11px;color:var(--text3)}
+.err{font-size:12px;color:var(--red);background:var(--red2);border-radius:var(--r);padding:.5rem .75rem;margin-bottom:.5rem;border:1px solid #fecaca}
+
+/* Filter bar */
+.filter-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:.6rem .9rem;background:var(--surface);border-radius:var(--r2);margin-bottom:.75rem;border:1px solid var(--border)}
+.filter-bar label{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.filter-bar select{font-size:12px;padding:4px 6px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface);color:var(--text)}
+.filt-info{margin-left:auto;font-size:11px;color:var(--text3)}
+
+/* Segment control */
+.seg{display:flex;border:1px solid var(--border2);border-radius:var(--r);overflow:hidden}
+.seg-btn{padding:4px 12px;font-size:11px;cursor:pointer;border:none;background:var(--surface);color:var(--text2);font-family:inherit;font-weight:600;border-right:1px solid var(--border2)}
+.seg-btn:last-child{border-right:none}
+.seg-btn.on{background:var(--text);color:#fff}
+
+/* Week pills */
+.week-pills{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.wpill{display:inline-flex;flex-direction:column;align-items:center;padding:3px 10px 2px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer;font-family:inherit;transition:all .1s;min-width:48px}
+.wpill .wl{font-size:11px;font-weight:600;line-height:1.3}
+.wpill .wc{font-size:9px;color:var(--text3);line-height:1.3}
+.wpill.on{background:var(--text);color:#fff;border-color:var(--text)}
+.wpill.on .wc{color:rgba(255,255,255,.6)}
+.wpill-back{font-size:11px;font-weight:500;color:var(--text2);cursor:pointer;background:none;border:none;padding:3px 6px;font-family:inherit;text-decoration:underline}
+.drill-label{font-size:11px;color:var(--text3);font-weight:500}
+
+/* WoW strip */
+.wow-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:.75rem}
+.wow-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:.65rem .9rem}
+.wow-card .wlbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:4px}
+.wow-card .wval{font-size:20px;font-weight:800;letter-spacing:-.5px;line-height:1}
+.wow-card .wdelta{font-size:11px;font-weight:600;margin-top:3px}
+.wow-card .wdelta.up{color:var(--green)}.wow-card .wdelta.dn{color:var(--red)}.wow-card .wdelta.ne{color:var(--text3)}
+
+/* Section nav */
+.section-nav{display:flex;gap:0;margin-bottom:.75rem;border-bottom:1px solid var(--border)}
+.snav-btn{padding:6px 16px;border:none;background:none;color:var(--text3);font-size:12px;cursor:pointer;font-family:inherit;font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.snav-btn:hover{color:var(--text)}
+.snav-btn.active{color:var(--text);border-bottom-color:var(--text);font-weight:600}
+
+/* KPI */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:.75rem}
+.kpi{background:var(--surface);border-radius:var(--r2);padding:.75rem .9rem;border:1px solid var(--border)}
+.kpi .lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:4px}
+.kpi .val{font-size:24px;font-weight:800;letter-spacing:-.5px;line-height:1}
+.kpi .ksub{display:flex;align-items:center;gap:6px;margin-top:4px}
+.kpi .cnt{font-size:11px;color:var(--text3)}
+.kpi .delta{font-size:11px;font-weight:600}
+.kpi .delta.up{color:var(--green)}.kpi .delta.dn{color:var(--red)}.kpi .delta.ne{color:var(--text3)}
+
+/* Charts */
+.chart-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:.9rem 1rem}
+.chart-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:.5rem}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:.5rem}
+.leg{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);font-weight:500}
+.leg-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.trend-hero{margin-bottom:.75rem}
+.charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:8px;margin-bottom:.75rem}
+
+/* Tables */
+.tbl-wrap{overflow-x:auto;border-radius:var(--r2);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:6px 10px;background:var(--surface3);border-bottom:1px solid var(--border);color:var(--text3);font-weight:700;white-space:nowrap;font-size:10px;text-transform:uppercase;letter-spacing:.3px;position:sticky;top:0;z-index:2}
+th.num{text-align:right}
+th:first-child{position:sticky;left:0;top:0;z-index:3;background:var(--surface3)}
+td{padding:5px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td:first-child{position:sticky;left:0;background:var(--surface);z-index:1;border-right:1px solid var(--border)}
+tr:hover td{background:var(--surface2)}
+tr:hover td:first-child{background:var(--surface2)}
+tr.total-row td{font-weight:700;background:var(--surface3)}
+tr.total-row td:first-child{background:var(--surface3)}
+tr:last-child td{border-bottom:none}
+.tbl-section-title{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin:1rem 0 .4rem;padding-bottom:.3rem;border-bottom:1px solid var(--border)}
+
+/* Badges */
+.bj{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:3px}
+.bj.g{background:var(--green2);color:var(--green)}
+.bj.w{background:var(--amber2);color:var(--amber)}
+.bj.b{background:var(--red2);color:var(--red)}
+.bj.n{color:var(--text3)}
+.bj.p{color:var(--purple)}
+.bj.t{color:var(--teal)}
+
+/* Sections */
+.section-block{display:none}.section-block.active{display:block}
+.empty-st{text-align:center;padding:4rem;color:var(--text3)}
+.map-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.75rem}
+
+@media(max-width:700px){
+  .kpi-row{grid-template-columns:repeat(2,1fr)}
+  .charts-grid,.map-grid{grid-template-columns:1fr}
+  .wow-strip{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="topbar">
+  <div style="display:flex;align-items:baseline;gap:0">
+    <h1>Logistics Control Tower</h1>
+    <span class="sub" id="data-range-sub"></span>
+  </div>
+  <div class="topbar-right">
+    <span class="pill" id="row-pill">No data</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('file')">Upload CSV / Excel</button>
+    <button class="tab" onclick="switchTab('paste')">Paste from Excel</button>
+  </div>
+  <div class="tab-panel active" id="tp-file">
+    <div class="drop-area" id="drop-area">
+      <input type="file" id="file-input" accept=".csv,.txt,.tsv,.xlsx,.xls">
+      <strong>Drop file here or click to browse</strong>
+      <p>CSV, TSV, or Excel — handles 2 lakh+ rows</p>
+    </div>
+  </div>
+  <div class="tab-panel" id="tp-paste">
+    <p style="font-size:12px;color:var(--text3);margin-bottom:.4rem">Ctrl+A, Ctrl+C in Excel, then paste below</p>
+    <textarea class="paste-box" id="paste-box" placeholder="Paste here — include the header row..."></textarea>
+    <div style="margin-top:.4rem"><button class="btn primary sm" onclick="processPaste()">Process</button></div>
+  </div>
+</div>
+
+<div id="err-box" class="err" style="display:none"></div>
+<div id="prog-wrap" style="display:none;margin-bottom:.5rem">
+  <div class="prog-track"><div class="prog-bar" id="prog-bar"></div></div>
+  <div class="prog-msg" id="prog-msg">Processing...</div>
+</div>
+
+<div id="col-map-card" class="card" style="display:none">
+  <div class="card-title">Column Mapping</div>
+  <div class="col-grid" id="col-grid"></div>
+  <div id="date-range-hint" class="date-range-hint" style="display:none"></div>
+</div>
+
+<div class="action-row" id="action-row" style="display:none">
+  <button class="btn primary" onclick="calculate()">Calculate metrics</button>
+  <button class="btn" onclick="hardReset()">Reset</button>
+</div>
+
+<div id="dashboard" style="display:none">
+
+  <div class="filter-bar">
+    <label>View</label>
+    <div class="seg">
+      <button class="seg-btn on" id="vt-week" onclick="setView('week')">Week</button>
+      <button class="seg-btn" id="vt-day" onclick="setView('day')">Day</button>
+    </div>
+    <label>Payment</label>
+    <div class="seg">
+      <button class="seg-btn on" id="tog-all" onclick="setCOD('all')">All</button>
+      <button class="seg-btn" id="tog-cod" onclick="setCOD('cod')">COD</button>
+      <button class="seg-btn" id="tog-pre" onclick="setCOD('prepaid')">Prepaid</button>
+    </div>
+    <label>Courier</label>
+    <select id="f-courier" onchange="applyFilters()"><option value="">All</option></select>
+    <label>Client</label>
+    <select id="f-client" onchange="applyFilters()"><option value="">All</option></select>
+    <label>Biz Type</label>
+    <select id="f-btype" onchange="applyFilters()"><option value="">All</option></select>
+    <label>Pickup From</label>
+    <input type="date" id="f-date-from" onchange="applyFilters()" style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border2);background:var(--surface);color:var(--text)">
+    <label>To</label>
+    <input type="date" id="f-date-to" onchange="applyFilters()" style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border2);background:var(--surface);color:var(--text)">
+    <div class="week-pills" id="week-pills-wrap">
+      <button class="wpill-back" id="wpill-back" onclick="backToWeeks()" style="display:none">← Weeks</button>
+      <span class="drill-label" id="drill-label" style="display:none"></span>
+      <div class="week-pills" id="week-pills"></div>
+    </div>
+    <button class="btn sm" onclick="clearFilters()">Clear</button>
+    <span class="filt-info" id="filt-info"></span>
+  </div>
+
+  <div class="wow-strip" id="wow-strip" style="display:none"></div>
+
+  <div class="section-nav">
+    <button class="snav-btn active" onclick="showSection('delivery',this)">Delivery</button>
+    <button class="snav-btn" onclick="showSection('fad',this)">FAD</button>
+    <button class="snav-btn" onclick="showSection('sla',this)">SLA</button>
+    <button class="snav-btn" onclick="showSection('ndr',this)">NDR &amp; Z-RTO</button>
+    <button class="snav-btn" onclick="showSection('wallet',this)">Wallet Share</button>
+    <button class="snav-btn" onclick="showSection('pivot',this)">Pivot</button>
+  </div>
+
+  <!-- Delivery -->
+  <div class="section-block active" id="sec-delivery">
+    <div class="kpi-row" id="kpi-delivery"></div>
+    <div class="trend-hero">
+      <div class="chart-wrap">
+        <div class="chart-title" id="del-chart-title">Delivery % &amp; RTO % trend</div>
+        <div class="legend" id="leg-del-trend"></div>
+        <div style="height:260px"><canvas id="c-del-trend"></canvas></div>
+      </div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — Delivery %</div>
+        <div style="height:210px"><canvas id="c-courier-del"></canvas></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — RTO %</div>
+        <div style="height:210px"><canvas id="c-courier-rto"></canvas></div>
+      </div>
+    </div>
+    <div class="tbl-section-title" id="del-tbl-title">Courier breakdown by period</div>
+    <div class="tbl-wrap"><table><thead><tr id="th-delivery"></tr></thead><tbody id="tb-delivery"></tbody></table></div>
+  </div>
+
+  <!-- FAD -->
+  <div class="section-block" id="sec-fad">
+    <div class="kpi-row" id="kpi-fad"></div>
+    <div class="trend-hero">
+      <div class="chart-wrap">
+        <div class="chart-title" id="fad-chart-title">FAD % trend</div>
+        <div style="height:260px"><canvas id="c-fad-trend"></canvas></div>
+      </div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — FAD %</div>
+        <div style="height:210px"><canvas id="c-fad-courier"></canvas></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title">FAD % by State (top 15)</div>
+        <div style="height:210px"><canvas id="c-fad-state-line"></canvas></div>
+      </div>
+    </div>
+    <div class="tbl-section-title">State-wise FAD %</div>
+    <div class="tbl-wrap" style="max-height:280px;overflow-y:auto"><table><thead><tr id="th-fad-state"></tr></thead><tbody id="tb-fad-state"></tbody></table></div>
+    <div class="tbl-section-title">FAD — courier by period</div>
+    <div class="tbl-wrap"><table><thead><tr id="th-fad"></tr></thead><tbody id="tb-fad"></tbody></table></div>
+  </div>
+
+  <!-- SLA -->
+  <div class="section-block" id="sec-sla">
+    <div class="filter-bar" style="margin-bottom:.75rem">
+      <label>SLA Status</label>
+      <select id="f-sla-status" onchange="renderSLA()">
+        <option value="">All</option>
+        <option value="Within SLA">Within SLA</option>
+        <option value="SLA Breached">SLA Breached</option>
+        <option value="Future SLA">Future SLA</option>
+      </select>
+    </div>
+    <div class="kpi-row" id="kpi-sla"></div>
+    <div class="trend-hero">
+      <div class="chart-wrap">
+        <div class="chart-title" id="sla-chart-title">SLA Adherence % trend</div>
+        <div class="legend" id="leg-sla-trend"></div>
+        <div style="height:260px"><canvas id="c-sla-trend"></canvas></div>
+      </div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — SLA Adherence %</div>
+        <div style="height:210px"><canvas id="c-sla-courier"></canvas></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — SLA Breach %</div>
+        <div style="height:210px"><canvas id="c-sla-breach-courier"></canvas></div>
+      </div>
+    </div>
+    <div class="tbl-section-title">SLA courier-wise by period</div>
+    <div class="tbl-wrap"><table><thead><tr id="th-sla"></tr></thead><tbody id="tb-sla"></tbody></table></div>
+  </div>
+
+  <!-- NDR & Z-RTO -->
+  <div class="section-block" id="sec-ndr">
+    <div class="kpi-row" id="kpi-ndr"></div>
+    <div class="tbl-section-title">NDR — Non-Delivery Report on First Attempt</div>
+    <div class="trend-hero">
+      <div class="chart-wrap">
+        <div class="chart-title" id="ndr-chart-title">NDR % trend</div>
+        <div style="height:230px"><canvas id="c-ndr-trend"></canvas></div>
+      </div>
+    </div>
+    <div class="charts-grid" style="margin-bottom:1.25rem">
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — NDR %</div>
+        <div style="height:210px"><canvas id="c-ndr-courier"></canvas></div>
+      </div>
+      <div class="tbl-wrap" style="overflow-x:auto">
+        <table><thead><tr id="th-ndr"></tr></thead><tbody id="tb-ndr"></tbody></table>
+      </div>
+    </div>
+    <div class="tbl-section-title">Z-RTO — Zero Attempt RTO</div>
+    <div class="trend-hero">
+      <div class="chart-wrap">
+        <div class="chart-title" id="zrto-chart-title">Z-RTO % trend</div>
+        <div style="height:230px"><canvas id="c-zrto-trend"></canvas></div>
+      </div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-wrap">
+        <div class="chart-title">Courier — Z-RTO %</div>
+        <div style="height:210px"><canvas id="c-zrto-courier"></canvas></div>
+      </div>
+      <div class="tbl-wrap" style="overflow-x:auto">
+        <table><thead><tr id="th-zrto"></tr></thead><tbody id="tb-zrto"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wallet -->
+  <div class="section-block" id="sec-wallet">
+    <div class="kpi-row" id="kpi-wallet"></div>
+    <div class="map-grid">
+      <div>
+        <div class="tbl-section-title">State-wise</div>
+        <div class="tbl-wrap" style="max-height:400px;overflow-y:auto"><table><thead><tr id="th-state"></tr></thead><tbody id="tb-state"></tbody></table></div>
+      </div>
+      <div>
+        <div class="tbl-section-title">City-wise</div>
+        <div class="tbl-wrap" style="max-height:400px;overflow-y:auto"><table><thead><tr id="th-city"></tr></thead><tbody id="tb-city"></tbody></table></div>
+      </div>
+    </div>
+    <div class="tbl-section-title">State-wise FAD %</div>
+    <div class="tbl-wrap" style="max-height:300px;overflow-y:auto"><table><thead><tr id="th-state-fad"></tr></thead><tbody id="tb-state-fad"></tbody></table></div>
+  </div>
+
+  <!-- Pivot -->
+  <div class="section-block" id="sec-pivot">
+    <div class="filter-bar" style="margin-bottom:.75rem">
+      <label>Metric</label>
+      <select id="f-pivot-metric" onchange="renderPivot()">
+        <option value="delivery">Delivery %</option>
+        <option value="rto">RTO %</option>
+        <option value="open">Open %</option>
+        <option value="lost">Lost %</option>
+        <option value="fad">FAD %</option>
+        <option value="sla">SLA Adherence %</option>
+        <option value="ndr">NDR %</option>
+        <option value="zrto">Z-RTO %</option>
+      </select>
+    </div>
+    <div class="trend-hero">
+      <div class="chart-wrap">
+        <div class="chart-title" id="pivot-chart-title">Pivot trend</div>
+        <div class="legend" id="leg-pivot"></div>
+        <div style="height:280px"><canvas id="c-pivot-trend"></canvas></div>
+      </div>
+    </div>
+    <div class="tbl-wrap"><table><thead><tr id="th-pivot"></tr></thead><tbody id="tb-pivot"></tbody></table></div>
+  </div>
+
+</div>
+
+<div class="empty-st" id="empty-st">
+  <div style="font-size:14px;font-weight:600;margin-bottom:.3rem">Logistics Control Tower</div>
+  <div style="font-size:12px;color:var(--text3)">Upload or paste your shipment export to begin</div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+var allRows=[],filteredRows=[],headers=[],charts=[];
+var allWeeks=[],allDays=[],activeWeeks=new Set();
+var weekCounts={},weekToDay={};  // weekLabel -> sorted day labels in that week
+var viewMode='week',codMode='all';
+var isDrillDown=false,drillWeek='';
+var TODAY=new Date();TODAY.setHours(0,0,0,0);
+
+// Pre-built indexes for perf
+var IDX={};
+function buildIdx(){
+  IDX={byPeriod:{},byCourier:{},byPC:{}};
+  var rows=filteredRows;
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var lk=getLK(r);
+    var c=r._courier;
+    if(!IDX.byPeriod[lk])IDX.byPeriod[lk]=[];
+    IDX.byPeriod[lk].push(r);
+    if(!IDX.byCourier[c])IDX.byCourier[c]=[];
+    IDX.byCourier[c].push(r);
+    var pk=lk+'|'+c;
+    if(!IDX.byPC[pk])IDX.byPC[pk]=[];
+    IDX.byPC[pk].push(r);
+  }
+}
+function gP(l){return IDX.byPeriod[l]||[];}
+function gC(c){return IDX.byCourier[c]||[];}
+function gPC(l,c){return IDX.byPC[l+'|'+c]||[];}
+
+var COL_KEYS  =['status','courier','attemptCount','pickupDate','oddDate','ofdDate','isCOD','clientName','businessType','calcOfdDate','firstNDRDate','deliveryState','deliveryCity'];
+var COL_LABELS=['Shipment Status','Courier / Partner','Attempt Count','Pickup Date','ODD Date','OFD Date','Is COD','Client Name','Business Type','Calculated OFD Date','First NDR Date','Delivery State','Delivery City'];
+
+var $=function(id){return document.getElementById(id);};
+function showErr(m){var e=$('err-box');e.textContent=m;e.style.display=m?'block':'none';}
+function setProgress(pct,msg){$('prog-bar').style.width=pct+'%';$('prog-msg').textContent=msg;}
+function switchTab(t){
+  ['file','paste'].forEach(function(x){$('tp-'+x).classList.toggle('active',x===t);});
+  document.querySelectorAll('.tab').forEach(function(b,i){b.classList.toggle('active',i===(t==='file'?0:1));});
+}
+
+// ── File handling ─────────────────────────────────────────────────────────────
+var da=$('drop-area');
+da.addEventListener('dragover',function(e){e.preventDefault();da.classList.add('drag');});
+da.addEventListener('dragleave',function(){da.classList.remove('drag');});
+da.addEventListener('drop',function(e){e.preventDefault();da.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+$('file-input').addEventListener('change',function(e){if(e.target.files[0])handleFile(e.target.files[0]);});
+
+function handleFile(file){
+  showErr('');$('prog-wrap').style.display='block';setProgress(5,'Reading...');
+  var name=file.name.toLowerCase();
+  if(name.endsWith('.xlsx')||name.endsWith('.xls')){
+    var reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        var wb=XLSX.read(e.target.result,{type:'array',cellDates:true});
+        var ws=wb.Sheets[wb.SheetNames[0]];
+        var data=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,dateNF:'yyyy-mm-dd'});
+        processRaw(data);
+      }catch(err){showErr('Excel read error: '+err.message);$('prog-wrap').style.display='none';}
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    Papa.parse(file,{header:false,skipEmptyLines:true,
+      complete:function(r){processRaw(r.data);},
+      error:function(e){showErr('Parse error: '+e.message);$('prog-wrap').style.display='none';}
+    });
+  }
+}
+function processPaste(){
+  var raw=$('paste-box').value.trim();
+  if(!raw){showErr('Nothing pasted.');return;}
+  showErr('');$('prog-wrap').style.display='block';setProgress(5,'Splitting...');
+  var lines=raw.split('\n').filter(function(l){return l.trim();});
+  var data=lines.map(function(l){return l.split('\t').map(function(c){return c.trim().replace(/^"|"$/g,'');});});
+  processRaw(data);
+}
+function processRaw(data){
+  if(!data||data.length<2){showErr('Need at least 2 rows.');$('prog-wrap').style.display='none';return;}
+  setProgress(20,'Mapping headers...');
+  headers=data[0].map(function(h){return String(h||'').trim().replace(/^"|"$/g,'');});
+  var rawRows=data.slice(1);
+  setProgress(50,'Building rows...');
+  setTimeout(function(){
+    allRows=rawRows.map(function(cells){
+      var o={};
+      for(var i=0;i<headers.length;i++) o[headers[i]]=(cells[i]!=null?String(cells[i]).trim().replace(/^"|"$/g,''):'');
+      return o;
+    }).filter(function(r){
+      var vals=Object.values(r);
+      for(var i=0;i<vals.length;i++) if(vals[i]) return true;
+      return false;
+    });
+    setProgress(90,'Setting up...');
+    buildColMap();
+    $('row-pill').textContent=allRows.length.toLocaleString()+' rows';
+    $('row-pill').className='pill ok';
+    setProgress(100,'Done');
+    setTimeout(function(){$('prog-wrap').style.display='none';},400);
+    $('col-map-card').style.display='block';
+    $('action-row').style.display='flex';
+    $('empty-st').style.display='none';
+  },0);
+}
+
+// ── Column map ────────────────────────────────────────────────────────────────
+function autoGuess(key,h){
+  var hl=h.toLowerCase().replace(/[_\s\-]/g,'');
+  var m={
+    // shipment_status must win over standard_status — list more specific first
+    status:['shipmentstatus','currentstatus','awbstatus'],
+    courier:['carriername','couriername','standardcourierpartner','carrier','courier'],
+    attemptCount:['attemptcount','attempts','deliveryattempts'],
+    pickupDate:['pickupdate','pickupdatetime','pickedup'],
+    oddDate:['odddate','orderdeliverydate','promiseddate'],
+    // 'ofddate' exact substring only — avoids matching 'calculatedofddate'
+    ofdDate:['outfordeliverydate','outdelivery'],
+    isCOD:['iscod','paymenttype','paymentmode','codtype'],
+    clientName:['clientname','sellername','merchantname'],
+    businessType:['businesstype','btype'],
+    calcOfdDate:['calculatedofddate','calcofd'],
+    firstNDRDate:['firstndrdate','firstndr','ndrdate'],
+    deliveryState:['deliverystate','destinationstate','tostate'],
+    deliveryCity:['deliverycity','destinationcity','tocity']
+  };
+  // Special exact-start checks to avoid substring collisions
+  if(key==='ofdDate') return hl==='ofddate'||hl.startsWith('outfordelivery')||hl.startsWith('outdelivery');
+  if(key==='status') return hl==='shipmentstatus'||hl==='currentstatus'||hl==='awbstatus'||hl==='status';
+  return (m[key]||[]).some(function(k){return hl.includes(k);});
+}
+function buildColMap(){
+  var g=$('col-grid');g.innerHTML='';
+  // Build a map of key -> first matching header index for auto-selection
+  var firstMatch={};
+  COL_KEYS.forEach(function(key){
+    for(var i=0;i<headers.length;i++){
+      if(autoGuess(key,headers[i])){firstMatch[key]=headers[i];break;}
+    }
+  });
+  COL_KEYS.forEach(function(key,i){
+    var div=document.createElement('div');div.className='col-item';
+    var lbl=document.createElement('label');lbl.textContent=COL_LABELS[i];
+    var sel=document.createElement('select');sel.id='sel-'+key;
+    var none=document.createElement('option');none.value='';none.textContent='— not mapped —';sel.appendChild(none);
+    headers.forEach(function(h){
+      var opt=document.createElement('option');opt.value=h;opt.textContent=h;
+      // First-match-wins: only select the first column that matches this key
+      if(firstMatch[key]===h)opt.selected=true;
+      sel.appendChild(opt);
+    });
+    // Re-check date range when pickup date mapping changes
+    if(key==='pickupDate') sel.addEventListener('change',updateDateHint);
+    div.appendChild(lbl);div.appendChild(sel);g.appendChild(div);
+  });
+  setTimeout(updateDateHint,50);
+}
+function gc(k){var el=$('sel-'+k);return el?el.value:'';}
+
+function updateDateHint(){
+  var col=gc('pickupDate');
+  var hint=$('date-range-hint');
+  if(!col||!allRows.length){hint.style.display='none';return;}
+  // Sample dates from this column
+  var dates=[];
+  for(var i=0;i<allRows.length;i++){
+    var d=parseDate(allRows[i][col]);
+    if(d) dates.push(d);
+    if(dates.length>500) break; // sample
+  }
+  if(!dates.length){hint.textContent='No valid dates found in selected column — check mapping.';hint.className='date-range-hint warn';hint.style.display='block';return;}
+  var mn=new Date(Math.min.apply(null,dates));
+  var mx=new Date(Math.max.apply(null,dates));
+  var rangeMonths=(mx-mn)/(1000*60*60*24*30);
+  hint.textContent='Detected date range: '+fmtDate(mn)+' → '+fmtDate(mx)+' ('+dates.length+(dates.length<allRows.length?' sampled':'')+' rows checked)';
+  hint.className='date-range-hint'+(rangeMonths>6?' warn':'');
+  hint.style.display='block';
+}
+function fmtDate(d){if(!d)return'?';return d.getDate()+' '+MONTHS[d.getMonth()]+' '+d.getFullYear();}
+
+// ── Data helpers ──────────────────────────────────────────────────────────────
+var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function classifyStatus(s){
+  var v=(s||'').trim().toLowerCase();
+  if(v==='delivered'||v==='dlvd'||v==='del') return 'Delivered';
+  if(/^rto/.test(v)||/^return/.test(v)) return 'RTO';
+  if(v==='lost') return 'Lost';
+  return 'Open';
+}
+function parseDate(s){
+  if(!s) return null;
+  if(s instanceof Date){var tmp=new Date(s);tmp.setHours(0,0,0,0);return tmp;}
+  s=String(s).trim();
+  if(!s||s==='-') return null;
+  var pts=s.split(/[\-\/\.]/);
+  if(pts.length!==3) return null;
+  var a=pts[0].trim(), b=pts[1].trim(), c=pts[2].trim();
+  var yr, mo, dy;
+  if(a.length===4){
+    yr=a; mo=b; dy=c;
+  } else if(c.length===4){
+    dy=a; mo=b; yr=c;
+  } else {
+    // DD-MM-YY — Indian standard (day first, then month, 2-digit year = 20xx)
+    dy=a; mo=b; yr='20'+c;
+  }
+  var iso=yr+'-'+mo.padStart(2,'0')+'-'+dy.padStart(2,'0');
+  var d=new Date(iso);
+  if(isNaN(d)) return null;
+  d.setHours(0,0,0,0);
+  return d;
+}
+function dateToWeekLabel(d){
+  if(!d) return 'Unknown';
+  var day=d.getDay();var diff=d.getDate()-(day===0?6:day-1);
+  var mon=new Date(d);mon.setDate(diff);mon.setHours(0,0,0,0);
+  return mon.getDate()+' '+MONTHS[mon.getMonth()];
+}
+function dateToWeekSort(d){
+  if(!d) return new Date(0);
+  var day=d.getDay();var diff=d.getDate()-(day===0?6:day-1);
+  var mon=new Date(d);mon.setDate(diff);mon.setHours(0,0,0,0);return mon;
+}
+function dateToDayLabel(d){
+  if(!d) return 'Unknown';
+  return DAYS[d.getDay()]+', '+d.getDate()+' '+MONTHS[d.getMonth()];
+}
+function dateToDayShort(d){
+  if(!d) return '';
+  return d.getDate()+' '+MONTHS[d.getMonth()];
+}
+function getSLAStatus(r){
+  var oddD=parseDate(r[gc('oddDate')]);
+  var ofdD=parseDate(r[gc('ofdDate')]);
+  if(!oddD) return 'No ODD';
+  if(oddD>TODAY&&!ofdD) return 'Future SLA';
+  if(ofdD) return ofdD<=oddD?'Within SLA':'SLA Breached';
+  return 'SLA Breached';
+}
+function isFAD(r){
+  if(r._status!=='Delivered') return false;
+  var att=parseInt(r[gc('attemptCount')]);
+  return !isNaN(att)&&att===1;
+}
+function isAttempted(r){var att=parseInt(r[gc('attemptCount')]);return !isNaN(att)&&att>0;}
+function isZRTO(r){
+  if(r._status!=='RTO') return false;
+  var cofd=gc('calcOfdDate');
+  return !cofd||!r[cofd]||r[cofd].trim()==='';
+}
+function isNDR(r){
+  var cofd=gc('calcOfdDate');var ndr=gc('firstNDRDate');
+  return (cofd&&r[cofd]&&r[cofd].trim()!=='')&&(ndr&&r[ndr]&&r[ndr].trim()!=='');
+}
+function hasOFD(r){var cofd=gc('calcOfdDate');return !!(cofd&&r[cofd]&&r[cofd].trim()!=='');}
+function getCODFlag(r){
+  var c=gc('isCOD');if(!c) return 'unknown';
+  var raw=r[c];
+  if(raw===undefined||raw===null||raw==='') raw=r['is_cod'];
+  if(raw===undefined||raw===null||raw==='') return 'unknown';
+  if(raw===true||raw===1) return 'cod';
+  if(raw===false||raw===0) return 'prepaid';
+  var v=raw.toString().trim().toUpperCase();
+  if(v==='TRUE'||v==='1'||v==='YES'||v==='COD') return 'cod';
+  if(v==='FALSE'||v==='0'||v==='NO'||v==='PREPAID') return 'prepaid';
+  return 'unknown';
+}
+
+// ── Calculate ─────────────────────────────────────────────────────────────────
+function calculate(){
+  showErr('');
+  if(!gc('status')){showErr('Map Shipment Status column.');return;}
+  if(!gc('pickupDate')){showErr('Map Pickup Date column.');return;}
+
+  var weekMap={},dayMap={},dayWeekMap={};
+  var couriers=new Set(),clients=new Set(),btypes=new Set();
+  var pickC=gc('pickupDate'),courC=gc('courier'),cliC=gc('clientName'),btC=gc('businessType');
+  weekCounts={};weekToDay={};
+
+  // Stamp all rows in one pass
+  for(var i=0;i<allRows.length;i++){
+    var r=allRows[i];
+    r._status=classifyStatus(r[gc('status')]);
+    r._sla=getSLAStatus(r);
+    r._attempted=isAttempted(r);
+    r._fad=isFAD(r);
+    r._zrto=isZRTO(r);
+    r._ndr=isNDR(r);
+    r._hasOFD=hasOFD(r);
+    r._cod=getCODFlag(r);
+
+    var pd=parseDate(r[pickC]);
+    r._pickupDate=pd;
+    // Only use pickupDate for week/day grouping
+    r._weekLabel=pd?dateToWeekLabel(pd):'Unknown';
+    r._weekSort=pd?dateToWeekSort(pd):new Date(0);
+    r._dayLabel=pd?dateToDayLabel(pd):'Unknown';
+    r._dayShort=pd?dateToDayShort(pd):'';
+    r._daySort=pd?pd.getTime():0;
+    r._dayWeek=r._weekLabel;
+
+    if(r._weekLabel!=='Unknown'){
+      if(!weekMap[r._weekLabel]||r._weekSort<weekMap[r._weekLabel]) weekMap[r._weekLabel]=r._weekSort;
+      weekCounts[r._weekLabel]=(weekCounts[r._weekLabel]||0)+1;
+      if(!weekToDay[r._weekLabel]) weekToDay[r._weekLabel]={};
+      if(r._dayLabel!=='Unknown') weekToDay[r._weekLabel][r._dayLabel]=r._daySort;
+    }
+    if(r._dayLabel!=='Unknown'){
+      if(!dayMap[r._dayLabel]) dayMap[r._dayLabel]=r._daySort;
+    }
+
+    r._courier=courC&&r[courC]?r[courC]:'Unknown';
+    r._client=cliC&&r[cliC]?r[cliC]:'Unknown';
+    r._btype=btC&&r[btC]?r[btC]:'Unknown';
+    r._state=gc('deliveryState')&&r[gc('deliveryState')]?r[gc('deliveryState')]:'Unknown';
+    r._city=gc('deliveryCity')&&r[gc('deliveryCity')]?r[gc('deliveryCity')]:'Unknown';
+
+    if(r._courier!=='Unknown') couriers.add(r._courier);
+    if(r._client!=='Unknown') clients.add(r._client);
+    if(r._btype!=='Unknown') btypes.add(r._btype);
+  }
+
+  allWeeks=Object.keys(weekMap).sort(function(a,b){return weekMap[a]-weekMap[b];});
+  allDays=Object.keys(dayMap).sort(function(a,b){return dayMap[a]-dayMap[b];});
+  activeWeeks=new Set(allWeeks);
+  isDrillDown=false;drillWeek='';
+
+  // Build week → sorted day labels
+  Object.keys(weekToDay).forEach(function(w){
+    var dm=weekToDay[w];
+    weekToDay[w]=Object.keys(dm).sort(function(a,b){return dm[a]-dm[b];});
+  });
+
+  function populateSel(id,items){
+    var sel=$(id);while(sel.options.length>1)sel.remove(1);
+    Array.from(items).sort().forEach(function(v){var o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o);});
+  }
+  populateSel('f-courier',couriers);
+  populateSel('f-client',clients);
+  populateSel('f-btype',btypes);
+
+  buildWeekPills();
+  updateDataRangeSub();
+  filteredRows=allRows.slice();
+  renderAll();
+  $('dashboard').style.display='block';
+}
+
+function toISOLocal(d){
+  // Returns 'YYYY-MM-DD' in local time for use in <input type=date>
+  var y=d.getFullYear();
+  var m=String(d.getMonth()+1).padStart(2,'0');
+  var day=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+day;
+}
+
+function updateDataRangeSub(){
+  // Find actual min/max pickup dates across all rows
+  var minD=null,maxD=null;
+  for(var i=0;i<allRows.length;i++){
+    var d=allRows[i]._pickupDate;
+    if(!d) continue;
+    if(!minD||d<minD) minD=d;
+    if(!maxD||d>maxD) maxD=d;
+  }
+  if(minD&&maxD){
+    var sub=$('data-range-sub');
+    sub.textContent=' · Pickup: '+fmtDate(minD)+' – '+fmtDate(maxD)+' · '+allRows.length.toLocaleString()+' shipments';
+    // Auto-set the date range inputs to match actual data range
+    $('f-date-from').value=toISOLocal(minD);
+    $('f-date-to').value=toISOLocal(maxD);
+  }
+}
+
+function buildWeekPills(){
+  var wp=$('week-pills');wp.innerHTML='';
+  var back=$('wpill-back'),dlbl=$('drill-label');
+  if(isDrillDown){
+    back.style.display='inline-block';
+    dlbl.style.display='inline-block';
+    dlbl.textContent='Week of '+drillWeek+':';
+    // Show day pills for the drilled week
+    var days=weekToDay[drillWeek]||[];
+    days.forEach(function(d){
+      var cnt=allRows.filter(function(r){return r._dayLabel===d;}).length;
+      var b=document.createElement('button');
+      b.className='wpill on';b.dataset.day=d;
+      b.innerHTML='<span class="wl">'+d+'</span><span class="wc">'+fmtK(cnt)+'</span>';
+      b.onclick=function(){
+        // In drill-down day view, pills just for info (all days shown)
+      };
+      wp.appendChild(b);
+    });
+  } else {
+    back.style.display='none';dlbl.style.display='none';
+    allWeeks.forEach(function(w){
+      var b=document.createElement('button');
+      b.className='wpill on';b.dataset.week=w;
+      b.innerHTML='<span class="wl">'+w+'</span><span class="wc">'+fmtK(weekCounts[w]||0)+'</span>';
+      b.onclick=function(e){
+        e.stopPropagation();
+        if(viewMode==='week'){
+          // Drill down: switch to day view for this week
+          isDrillDown=true;drillWeek=w;
+          viewMode='day';
+          $('vt-week').classList.remove('on');$('vt-day').classList.add('on');
+          buildWeekPills();
+          applyFilters();
+        } else {
+          // In day view without drill: toggle week
+          if(activeWeeks.has(w))activeWeeks.delete(w);else activeWeeks.add(w);
+          b.classList.toggle('on',activeWeeks.has(w));
+          applyFilters();
+        }
+      };
+      wp.appendChild(b);
+    });
+  }
+}
+
+function backToWeeks(){
+  isDrillDown=false;drillWeek='';
+  viewMode='week';
+  $('vt-week').classList.add('on');$('vt-day').classList.remove('on');
+  activeWeeks=new Set(allWeeks);
+  buildWeekPills();
+  applyFilters();
+}
+
+function fmtK(n){return n>=1000?(n/1000).toFixed(1)+'k':n.toLocaleString();}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+function setView(v){
+  if(v===viewMode) return;
+  viewMode=v;isDrillDown=false;drillWeek='';
+  $('vt-week').classList.toggle('on',v==='week');
+  $('vt-day').classList.toggle('on',v==='day');
+  buildWeekPills();
+  applyFilters();
+}
+function setCOD(m){
+  codMode=m;
+  $('tog-all').classList.toggle('on',m==='all');
+  $('tog-cod').classList.toggle('on',m==='cod');
+  $('tog-pre').classList.toggle('on',m==='prepaid');
+  applyFilters();
+}
+function applyFilters(){
+  var co=$('f-courier').value,cl=$('f-client').value,bt=$('f-btype').value;
+  var fromVal=$('f-date-from').value,toVal=$('f-date-to').value;
+  var fromD=fromVal?new Date(fromVal):null;
+  var toD=toVal?new Date(toVal):null;
+  if(toD) toD.setHours(23,59,59,999);
+  filteredRows=allRows.filter(function(r){
+    // Pickup date range filter — applied FIRST, before week pills
+    if(fromD&&r._pickupDate&&r._pickupDate<fromD) return false;
+    if(toD&&r._pickupDate&&r._pickupDate>toD) return false;
+    if(isDrillDown){
+      if(r._weekLabel!==drillWeek) return false;
+    } else {
+      if(activeWeeks.size>0&&!activeWeeks.has(r._weekLabel)) return false;
+    }
+    if(co&&r._courier!==co) return false;
+    if(cl&&r._client!==cl) return false;
+    if(bt&&r._btype!==bt) return false;
+    if(codMode==='cod'&&r._cod!=='cod') return false;
+    if(codMode==='prepaid'&&r._cod!=='prepaid') return false;
+    return true;
+  });
+  $('filt-info').textContent=filteredRows.length.toLocaleString()+' rows';
+  renderAll();
+}
+function clearFilters(){
+  $('f-courier').value='';$('f-client').value='';$('f-btype').value='';
+  $('f-date-from').value='';$('f-date-to').value='';
+  codMode='all';
+  $('tog-all').classList.add('on');$('tog-cod').classList.remove('on');$('tog-pre').classList.remove('on');
+  isDrillDown=false;drillWeek='';viewMode='week';
+  $('vt-week').classList.add('on');$('vt-day').classList.remove('on');
+  activeWeeks=new Set(allWeeks);
+  buildWeekPills();
+  $('filt-info').textContent='';filteredRows=allRows.slice();renderAll();
+}
+
+// ── Labels ────────────────────────────────────────────────────────────────────
+function getLabels(){
+  if(viewMode==='day'){
+    if(isDrillDown){
+      // Return the 7 days of the drilled week (that exist in filtered data)
+      var days=weekToDay[drillWeek]||[];
+      var used=new Set(filteredRows.map(function(r){return r._dayLabel;}));
+      return days.filter(function(d){return used.has(d);});
+    }
+    var used=new Set(filteredRows.map(function(r){return r._dayLabel;}));
+    used.delete('Unknown');
+    return allDays.filter(function(l){return used.has(l);});
+  }
+  var used=new Set(filteredRows.map(function(r){return r._weekLabel;}));
+  used.delete('Unknown');
+  return allWeeks.filter(function(l){return used.has(l);});
+}
+function getLK(r){return viewMode==='day'?r._dayLabel:r._weekLabel;}
+function getShortLabel(l){
+  // For day labels: extract the date part for charts
+  if(viewMode==='day'){
+    // "Mon, 3 Jun" -> "Mon 3"
+    var parts=l.split(', ');
+    if(parts.length===2) return parts[0]+'\n'+parts[1].split(' ')[0]+' '+parts[1].split(' ')[1];
+    return l;
+  }
+  return l;
+}
+function getCouriers(){
+  var cs=new Set();
+  filteredRows.forEach(function(r){if(r._courier!=='Unknown')cs.add(r._courier);});
+  return Array.from(cs).sort();
+}
+function periodDesc(labels){
+  if(!labels||!labels.length) return '';
+  if(labels.length===1) return labels[0];
+  return labels[0]+' – '+labels[labels.length-1];
+}
+
+// ── WoW delta ─────────────────────────────────────────────────────────────────
+function wowDelta(fn){
+  var wks=allWeeks.filter(function(w){return activeWeeks.has(w);});
+  if(wks.length<2) return null;
+  var cur=wks[wks.length-1],prev=wks[wks.length-2];
+  var cR=filteredRows.filter(function(r){return r._weekLabel===cur;});
+  var pR=filteredRows.filter(function(r){return r._weekLabel===prev;});
+  if(!cR.length||!pR.length) return null;
+  return{cur:fn(cR),prev:fn(pR),delta:+(fn(cR)-fn(pR)).toFixed(1),prevW:prev,curW:cur};
+}
+function dHtml(d,goodUp){
+  if(!d||d.delta===0) return '';
+  var up=goodUp?d.delta>0:d.delta<0;
+  return '<span class="delta '+(up?'up':'dn')+'">'+(d.delta>0?'+':'')+d.delta.toFixed(1)+'%</span>';
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderAll(){
+  destroyCharts();
+  buildIdx();
+  renderWoW();
+  renderDelivery();renderFAD();renderSLA();renderNDR();renderWallet();renderPivot();
+}
+function destroyCharts(){charts.forEach(function(c){try{c.destroy();}catch(e){}});charts=[];}
+
+// ── Chart helpers ─────────────────────────────────────────────────────────────
+function p(a,b){return b?+(a/b*100).toFixed(1):0;}
+function pFmt(v){return v.toFixed(1)+'%';}
+var PAL=['#2563eb','#16a34a','#dc2626','#d97706','#7c3aed','#0f766e','#9333ea','#65a30d','#ea580c','#0891b2','#be185d','#15803d'];
+function clr(i){return PAL[i%PAL.length];}
+function mkChart(id,type,data,opts,plugins){
+  var el=$(id);if(!el)return null;
+  var cfg={type:type,data:data,options:opts};
+  if(plugins) cfg.plugins=plugins;
+  var c=new Chart(el,cfg);charts.push(c);return c;
+}
+
+// Bar options with data labels
+function barOpts(horizontal,sugMax){
+  var axis=horizontal?'x':'y';
+  var crossAxis=horizontal?'y':'x';
+  var opts={
+    responsive:true,maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{display:false},
+      tooltip:{callbacks:{label:function(ctx){return ctx.dataset.label+': '+pFmt(ctx.parsed[axis]||0);}}},
+      datalabels:{
+        anchor:'end',align:'end',
+        formatter:function(v){return v>0?pFmt(v):'';},
+        font:{size:9,weight:'600'},
+        color:'#444',
+        clip:false
+      }
+    },
+    layout:{padding:{top:18}},
+    scales:{}
+  };
+  if(horizontal){
+    opts.indexAxis='y';
+    opts.scales={
+      x:{grid:{color:'rgba(0,0,0,0.04)'},min:0,suggestedMax:sugMax||100,ticks:{font:{size:10},callback:function(v){return v+'%';}}},
+      y:{grid:{display:false},ticks:{font:{size:10}}}
+    };
+  } else {
+    opts.scales={
+      x:{grid:{display:false},ticks:{font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:20,minRotation:20}},
+      y:{grid:{color:'rgba(0,0,0,0.04)'},min:0,suggestedMax:sugMax||100,ticks:{font:{size:10},callback:function(v){return v+'%';}}}
+    };
+  }
+  return opts;
+}
+
+// Line options (for trends)
+function lineOpts(sugMax){
+  return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{display:false},
+      tooltip:{callbacks:{label:function(ctx){return ctx.dataset.label+': '+pFmt(ctx.parsed.y||0);}}},
+      datalabels:{display:false}
+    },
+    scales:{
+      x:{grid:{color:'rgba(0,0,0,0.03)'},ticks:{font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:25,minRotation:20}},
+      y:{grid:{color:'rgba(0,0,0,0.04)'},min:0,suggestedMax:sugMax||100,ticks:{font:{size:10},callback:function(v){return v+'%';}}}
+    }
+  };
+}
+
+function makeLeg(id,items){
+  var el=$(id);if(!el)return;
+  el.innerHTML=items.map(function(it){
+    return'<span class="leg"><span class="leg-dot" style="background:'+(it[2]?'transparent':'')+(it[2]?';outline:2px dashed '+it[1]:';background:'+it[1])+'"></span>'+it[0]+'</span>';
+  }).join('');
+}
+
+function badge(v,hi,mid){return'<span class="bj '+(v>=hi?'g':v>=mid?'w':'b')+'">'+pFmt(v)+'</span>';}
+function badgeInv(v,lo,hi){return'<span class="bj '+(v<=lo?'g':v<=hi?'w':'b')+'">'+pFmt(v)+'</span>';}
+
+function kpiHTML(items){
+  return items.map(function(k){
+    return'<div class="kpi"><div class="lbl">'+k.lbl+'</div>'+
+      '<div class="val"'+(k.col?' style="color:'+k.col+'"':'')+'>'+k.val+'</div>'+
+      '<div class="ksub"><span class="cnt">'+k.sub+'</span>'+(k.wow||'')+'</div></div>';
+  }).join('');
+}
+
+// Main trend chart: line in week view, line in day view too (per user request)
+function trendChart(id,datasets,labels,sugMax){
+  // Always line chart
+  var ds=datasets.map(function(d,i){
+    return Object.assign({
+      tension:0.3,pointRadius:labels.length>20?2:4,pointHoverRadius:6,
+      borderWidth:2.5,fill:false,spanGaps:false
+    },d);
+  });
+  mkChart(id,'line',{labels:labels,datasets:ds},lineOpts(sugMax));
+}
+
+// Bar chart for couriers (vertical, with datalabels)
+function courierBar(id,couriers,dataFn,colors){
+  var data=couriers.map(dataFn);
+  mkChart(id,'bar',
+    {labels:couriers,datasets:[{label:'',data:data,
+      backgroundColor:(colors||couriers.map(function(_,i){return clr(i)+'bb';})),
+      borderColor:(colors?colors.map(function(c){return c;}):couriers.map(function(_,i){return clr(i);})),
+      borderWidth:1
+    }]},
+    barOpts(false),
+    [ChartDataLabels]
+  );
+}
+
+// ── WoW Strip ─────────────────────────────────────────────────────────────────
+function renderWoW(){
+  var wks=allWeeks.filter(function(w){return activeWeeks.has(w);});
+  var strip=$('wow-strip');
+  if(wks.length<2||isDrillDown){strip.style.display='none';return;}
+  var curW=wks[wks.length-1],prevW=wks[wks.length-2];
+  var cR=filteredRows.filter(function(r){return r._weekLabel===curW;});
+  var pR=filteredRows.filter(function(r){return r._weekLabel===prevW;});
+  if(!cR.length){strip.style.display='none';return;}
+  strip.style.display='grid';
+  var metrics=[
+    {l:'Delivery %',fn:function(r){return p(r.filter(function(x){return x._status==='Delivered';}).length,r.length||1);},g:true,c:'var(--green)'},
+    {l:'RTO %',fn:function(r){return p(r.filter(function(x){return x._status==='RTO';}).length,r.length||1);},g:false,c:'var(--red)'},
+    {l:'FAD %',fn:function(r){var a=r.filter(function(x){return x._attempted;});return p(a.filter(function(x){return x._fad;}).length,a.length||1);},g:true,c:'var(--blue)'},
+    {l:'SLA %',fn:function(r){return p(r.filter(function(x){return x._sla==='Within SLA';}).length,r.length||1);},g:true,c:'var(--purple)'},
+    {l:'NDR %',fn:function(r){var o=r.filter(function(x){return x._hasOFD;});return p(r.filter(function(x){return x._ndr;}).length,o.length||1);},g:false,c:'var(--amber)'},
+    {l:'Z-RTO %',fn:function(r){return p(r.filter(function(x){return x._zrto;}).length,r.length||1);},g:false,c:'var(--red)'},
+  ];
+  strip.innerHTML=metrics.map(function(m){
+    var cur=m.fn(cR),prev=pR.length?m.fn(pR):null;
+    var delta=prev!==null?+(cur-prev).toFixed(1):null;
+    var dStr='';
+    if(delta!==null&&delta!==0){
+      var up=m.g?delta>0:delta<0;
+      dStr='<div class="wdelta '+(up?'up':'dn')+'">'+(delta>0?'+':'')+delta.toFixed(1)+'% vs wk of '+prevW+'</div>';
+    } else if(delta===0){dStr='<div class="wdelta ne">no change</div>';}
+    return'<div class="wow-card"><div class="wlbl">'+m.l+'</div><div class="wval" style="color:'+m.c+'">'+pFmt(cur)+'</div>'+dStr+'<div style="font-size:9px;color:var(--text3);margin-top:2px">wk of '+curW+'</div></div>';
+  }).join('');
+}
+
+// ── Section 1: Delivery ───────────────────────────────────────────────────────
+function renderDelivery(){
+  var rows=filteredRows,tot=rows.length||1;
+  var del=0,rto=0,lost=0,open=0;
+  for(var i=0;i<rows.length;i++){
+    var s=rows[i]._status;
+    if(s==='Delivered')del++;else if(s==='RTO')rto++;else if(s==='Lost')lost++;else open++;
+  }
+  var dD=wowDelta(function(r){return p(r.filter(function(x){return x._status==='Delivered';}).length,r.length||1);});
+  var rD=wowDelta(function(r){return p(r.filter(function(x){return x._status==='RTO';}).length,r.length||1);});
+
+  $('kpi-delivery').innerHTML=kpiHTML([
+    {lbl:'Total',val:tot.toLocaleString(),col:'',sub:'shipments'},
+    {lbl:'Delivery %',val:pFmt(p(del,tot)),col:'var(--green)',sub:del.toLocaleString(),wow:dHtml(dD,true)},
+    {lbl:'RTO %',val:pFmt(p(rto,tot)),col:'var(--red)',sub:rto.toLocaleString(),wow:dHtml(rD,false)},
+    {lbl:'Lost %',val:pFmt(p(lost,tot)),col:'var(--amber)',sub:lost.toLocaleString()},
+    {lbl:'Open %',val:pFmt(p(open,tot)),col:'var(--blue)',sub:open.toLocaleString()},
+  ]);
+
+  var labels=getLabels();
+  var period=periodDesc(labels);
+  $('del-chart-title').textContent='Delivery % & RTO % — '+period;
+  $('del-tbl-title').textContent='Courier breakdown — '+period;
+  makeLeg('leg-del-trend',[['Delivery %','#16a34a'],['RTO %','#dc2626',true]]);
+
+  trendChart('c-del-trend',[
+    {label:'Delivery %',data:labels.map(function(l){var s=gP(l);return p(s.filter(function(r){return r._status==='Delivered';}).length,s.length||1);}),borderColor:'#16a34a',backgroundColor:'rgba(22,163,74,0.08)',fill:true},
+    {label:'RTO %',data:labels.map(function(l){var s=gP(l);return p(s.filter(function(r){return r._status==='RTO';}).length,s.length||1);}),borderColor:'#dc2626',borderDash:[5,3]}
+  ],labels);
+
+  var couriers=getCouriers();
+  courierBar('c-courier-del',couriers,function(c){var s=gC(c);return p(s.filter(function(r){return r._status==='Delivered';}).length,s.length||1);});
+  courierBar('c-courier-rto',couriers,function(c){var s=gC(c);return p(s.filter(function(r){return r._status==='RTO';}).length,s.length||1);},
+    couriers.map(function(){return '#dc262688';}));
+
+  var th=$('th-delivery');
+  th.innerHTML='<th>Courier</th>'+labels.map(function(l){return'<th class="num">'+l+'</th>';}).join('')+'<th class="num">Total</th><th class="num">Del %</th><th class="num">RTO %</th><th class="num">Open %</th>';
+  var tb=$('tb-delivery');tb.innerHTML='';
+  couriers.forEach(function(c){
+    var cr=gC(c);
+    var cells=labels.map(function(l){var s=gPC(l,c);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';return'<td class="num">'+badge(p(s.filter(function(r){return r._status==='Delivered';}).length,s.length),80,60)+'</td>';}).join('');
+    var cd=cr.filter(function(r){return r._status==='Delivered';}).length;
+    var cr2=cr.filter(function(r){return r._status==='RTO';}).length;
+    var co2=cr.filter(function(r){return r._status==='Open';}).length;
+    tb.innerHTML+='<tr><td><strong>'+c+'</strong></td>'+cells+'<td class="num">'+cr.length.toLocaleString()+'</td><td class="num">'+badge(p(cd,cr.length),80,60)+'</td><td class="num">'+badgeInv(p(cr2,cr.length),10,20)+'</td><td class="num">'+badgeInv(p(co2,cr.length),15,30)+'</td></tr>';
+  });
+  var tcells=labels.map(function(l){var s=gP(l);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';return'<td class="num">'+badge(p(s.filter(function(r){return r._status==='Delivered';}).length,s.length),80,60)+'</td>';}).join('');
+  tb.innerHTML+='<tr class="total-row"><td>All Couriers</td>'+tcells+'<td class="num">'+tot.toLocaleString()+'</td><td class="num">'+badge(p(del,tot),80,60)+'</td><td class="num">'+badgeInv(p(rto,tot),10,20)+'</td><td class="num">'+badgeInv(p(open,tot),15,30)+'</td></tr>';
+}
+
+// ── Section 2: FAD ────────────────────────────────────────────────────────────
+function renderFAD(){
+  var rows=filteredRows;
+  var att=rows.filter(function(r){return r._attempted;});
+  var fadCnt=att.filter(function(r){return r._fad;}).length;
+  var tot=att.length||1;
+  var fD=wowDelta(function(r){var a=r.filter(function(x){return x._attempted;});return p(a.filter(function(x){return x._fad;}).length,a.length||1);});
+  $('kpi-fad').innerHTML=kpiHTML([
+    {lbl:'Attempted',val:att.length.toLocaleString(),col:'',sub:'attempt ≥ 1'},
+    {lbl:'FAD Count',val:fadCnt.toLocaleString(),col:'var(--green)',sub:'1st attempt delivered'},
+    {lbl:'FAD %',val:pFmt(p(fadCnt,tot)),col:'var(--blue)',sub:'of attempted',wow:dHtml(fD,true)},
+    {lbl:'Multi-Attempt',val:(att.length-fadCnt).toLocaleString(),col:'var(--amber)',sub:pFmt(p(att.length-fadCnt,tot))},
+  ]);
+
+  var labels=getLabels();
+  $('fad-chart-title').textContent='FAD % — '+periodDesc(labels);
+
+  trendChart('c-fad-trend',[
+    {label:'FAD %',data:labels.map(function(l){var s=gP(l).filter(function(r){return r._attempted;});return p(s.filter(function(r){return r._fad;}).length,s.length||1);}),borderColor:'#2563eb',backgroundColor:'rgba(37,99,235,0.07)',fill:true}
+  ],labels);
+
+  var couriers=getCouriers();
+  courierBar('c-fad-courier',couriers,function(c){var s=gC(c).filter(function(r){return r._attempted;});return p(s.filter(function(r){return r._fad;}).length,s.length||1);});
+
+  // FAD by state — line chart (top 15 by volume)
+  var stateMap={};
+  att.forEach(function(r){var s=r._state;if(s&&s!=='Unknown'){if(!stateMap[s])stateMap[s]={att:0,fad:0};stateMap[s].att++;if(r._fad)stateMap[s].fad++;}});
+  var states=Object.keys(stateMap).sort(function(a,b){return stateMap[b].att-stateMap[a].att;}).slice(0,15);
+  var stateVals=states.map(function(s){return p(stateMap[s].fad,stateMap[s].att||1);});
+  mkChart('c-fad-state-line','line',
+    {labels:states,datasets:[{label:'FAD %',data:stateVals,borderColor:'#2563eb',backgroundColor:'rgba(37,99,235,0.07)',fill:true,tension:0.2,pointRadius:5,pointHoverRadius:7,borderWidth:2}]},
+    {responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:function(ctx){return 'FAD %: '+pFmt(ctx.parsed.y);}}},
+        datalabels:{anchor:'end',align:'top',formatter:function(v){return pFmt(v);},font:{size:9,weight:'600'},color:'#2563eb',clip:false}
+      },
+      layout:{padding:{top:20}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:10},maxRotation:40,autoSkip:false}},
+        y:{grid:{color:'rgba(0,0,0,0.04)'},min:0,suggestedMax:100,ticks:{font:{size:10},callback:function(v){return v+'%';}}}
+      }
+    },[ChartDataLabels]
+  );
+
+  var allStates=Object.keys(stateMap).sort(function(a,b){return stateMap[b].att-stateMap[a].att;});
+  $('th-fad-state').innerHTML='<th>State</th><th class="num">Attempted</th><th class="num">FAD</th><th class="num">FAD %</th>';
+  $('tb-fad-state').innerHTML=allStates.map(function(s){var m=stateMap[s];return'<tr><td>'+s+'</td><td class="num">'+m.att.toLocaleString()+'</td><td class="num">'+m.fad.toLocaleString()+'</td><td class="num">'+badge(p(m.fad,m.att),80,60)+'</td></tr>';}).join('');
+
+  var th=$('th-fad');
+  th.innerHTML='<th>Courier</th>'+labels.map(function(l){return'<th class="num">'+l+'</th>';}).join('')+'<th class="num">Att.</th><th class="num">FAD</th><th class="num">FAD %</th>';
+  var tb=$('tb-fad');tb.innerHTML='';
+  couriers.forEach(function(c){
+    var cr=gC(c).filter(function(r){return r._attempted;});
+    var cells=labels.map(function(l){var s=gPC(l,c).filter(function(r){return r._attempted;});if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';return'<td class="num">'+badge(p(s.filter(function(r){return r._fad;}).length,s.length),80,60)+'</td>';}).join('');
+    var fv=cr.filter(function(r){return r._fad;}).length;
+    tb.innerHTML+='<tr><td><strong>'+c+'</strong></td>'+cells+'<td class="num">'+cr.length.toLocaleString()+'</td><td class="num">'+fv+'</td><td class="num">'+badge(p(fv,cr.length||1),80,60)+'</td></tr>';
+  });
+  var tcells=labels.map(function(l){var s=gP(l).filter(function(r){return r._attempted;});if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';return'<td class="num">'+badge(p(s.filter(function(r){return r._fad;}).length,s.length),80,60)+'</td>';}).join('');
+  tb.innerHTML+='<tr class="total-row"><td>All Couriers</td>'+tcells+'<td class="num">'+att.length.toLocaleString()+'</td><td class="num">'+fadCnt+'</td><td class="num">'+badge(p(fadCnt,tot),80,60)+'</td></tr>';
+}
+
+// ── Section 3: SLA ────────────────────────────────────────────────────────────
+function renderSLA(){
+  var rows=filteredRows;
+  var within=0,breached=0,future=0;
+  for(var i=0;i<rows.length;i++){
+    var s=rows[i]._sla;
+    if(s==='Within SLA')within++;else if(s==='SLA Breached')breached++;else if(s==='Future SLA')future++;
+  }
+  var tot=rows.length||1;
+  var sD=wowDelta(function(r){return p(r.filter(function(x){return x._sla==='Within SLA';}).length,r.length||1);});
+  $('kpi-sla').innerHTML=kpiHTML([
+    {lbl:'SLA Adherence %',val:pFmt(p(within,tot)),col:'var(--green)',sub:within.toLocaleString()+' within',wow:dHtml(sD,true)},
+    {lbl:'SLA Breached %',val:pFmt(p(breached,tot)),col:'var(--red)',sub:breached.toLocaleString()},
+    {lbl:'Future SLA',val:future.toLocaleString(),col:'var(--purple)',sub:pFmt(p(future,tot))},
+    {lbl:'Total',val:tot.toLocaleString(),col:'',sub:'filtered'},
+  ]);
+
+  var labels=getLabels();var couriers=getCouriers();
+  $('sla-chart-title').textContent='SLA Adherence % — '+periodDesc(labels);
+  makeLeg('leg-sla-trend',[['Within SLA','#16a34a'],['SLA Breached','#dc2626',true]]);
+
+  trendChart('c-sla-trend',[
+    {label:'Within SLA',data:labels.map(function(l){var s=gP(l);return p(s.filter(function(r){return r._sla==='Within SLA';}).length,s.length||1);}),borderColor:'#16a34a',backgroundColor:'rgba(22,163,74,0.07)',fill:true},
+    {label:'SLA Breached',data:labels.map(function(l){var s=gP(l);return p(s.filter(function(r){return r._sla==='SLA Breached';}).length,s.length||1);}),borderColor:'#dc2626',borderDash:[5,3]}
+  ],labels);
+
+  courierBar('c-sla-courier',couriers,function(c){var s=gC(c);return p(s.filter(function(r){return r._sla==='Within SLA';}).length,s.length||1);});
+  courierBar('c-sla-breach-courier',couriers,function(c){var s=gC(c);return p(s.filter(function(r){return r._sla==='SLA Breached';}).length,s.length||1);},couriers.map(function(){return '#dc262688';}));
+
+  var th=$('th-sla');
+  th.innerHTML='<th>Courier</th>'+labels.map(function(l){return'<th class="num">'+l+'</th>';}).join('')+'<th class="num">Total</th><th class="num">Within</th><th class="num">Breached</th><th class="num">Future</th>';
+  var tb=$('tb-sla');tb.innerHTML='';
+  couriers.forEach(function(c){
+    var cr=gC(c);
+    var cells=labels.map(function(l){var s=gPC(l,c);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';var wi=s.filter(function(r){return r._sla==='Within SLA';}).length;return'<td class="num">'+badge(p(wi,s.length),90,75)+'</td>';}).join('');
+    var wi=cr.filter(function(r){return r._sla==='Within SLA';}).length;
+    var br=cr.filter(function(r){return r._sla==='SLA Breached';}).length;
+    var fu=cr.filter(function(r){return r._sla==='Future SLA';}).length;
+    tb.innerHTML+='<tr><td><strong>'+c+'</strong></td>'+cells+'<td class="num">'+cr.length.toLocaleString()+'</td><td class="num">'+badge(p(wi,cr.length||1),90,75)+'</td><td class="num">'+badgeInv(p(br,cr.length||1),5,15)+'</td><td class="num"><span class="bj p">'+fu+'</span></td></tr>';
+  });
+  var tcells=labels.map(function(l){var s=gP(l);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';var wi=s.filter(function(r){return r._sla==='Within SLA';}).length;return'<td class="num">'+badge(p(wi,s.length),90,75)+'</td>';}).join('');
+  tb.innerHTML+='<tr class="total-row"><td>All Couriers</td>'+tcells+'<td class="num">'+tot.toLocaleString()+'</td><td class="num">'+badge(p(within,tot),90,75)+'</td><td class="num">'+badgeInv(p(breached,tot),5,15)+'</td><td class="num"><span class="bj p">'+future+'</span></td></tr>';
+}
+
+// ── Section 4: NDR & Z-RTO ────────────────────────────────────────────────────
+function renderNDR(){
+  var rows=filteredRows,tot=rows.length||1;
+  var ofdRows=rows.filter(function(r){return r._hasOFD;});
+  var ndrCnt=rows.filter(function(r){return r._ndr;}).length;
+  var zrtoCnt=rows.filter(function(r){return r._zrto;}).length;
+  var ofdTot=ofdRows.length||1;
+  var nD=wowDelta(function(r){var o=r.filter(function(x){return x._hasOFD;});return p(r.filter(function(x){return x._ndr;}).length,o.length||1);});
+  var zD=wowDelta(function(r){return p(r.filter(function(x){return x._zrto;}).length,r.length||1);});
+  $('kpi-ndr').innerHTML=kpiHTML([
+    {lbl:'OFD Shipments',val:ofdRows.length.toLocaleString(),col:'',sub:'calc_ofd_date set'},
+    {lbl:'NDR Count',val:ndrCnt.toLocaleString(),col:'var(--amber)',sub:''},
+    {lbl:'NDR %',val:pFmt(p(ndrCnt,ofdTot)),col:'var(--red)',sub:'of OFD',wow:dHtml(nD,false)},
+    {lbl:'Z-RTO Count',val:zrtoCnt.toLocaleString(),col:'var(--purple)',sub:''},
+    {lbl:'Z-RTO %',val:pFmt(p(zrtoCnt,tot)),col:'var(--red)',sub:'of total',wow:dHtml(zD,false)},
+  ]);
+
+  var labels=getLabels(),couriers=getCouriers();
+  $('ndr-chart-title').textContent='NDR % — '+periodDesc(labels);
+  $('zrto-chart-title').textContent='Z-RTO % — '+periodDesc(labels);
+
+  trendChart('c-ndr-trend',[
+    {label:'NDR %',data:labels.map(function(l){var s=gP(l);var o=s.filter(function(r){return r._hasOFD;});return p(s.filter(function(r){return r._ndr;}).length,o.length||1);}),borderColor:'#d97706',backgroundColor:'rgba(217,119,6,0.07)',fill:true}
+  ],labels,50);
+
+  trendChart('c-zrto-trend',[
+    {label:'Z-RTO %',data:labels.map(function(l){var s=gP(l);return p(s.filter(function(r){return r._zrto;}).length,s.length||1);}),borderColor:'#7c3aed',backgroundColor:'rgba(124,58,237,0.07)',fill:true}
+  ],labels,50);
+
+  courierBar('c-ndr-courier',couriers,function(c){var s=gC(c);var o=s.filter(function(r){return r._hasOFD;});return p(s.filter(function(r){return r._ndr;}).length,o.length||1);});
+  courierBar('c-zrto-courier',couriers,function(c){var s=gC(c);return p(s.filter(function(r){return r._zrto;}).length,s.length||1);});
+
+  var th=$('th-ndr');
+  th.innerHTML='<th>Courier</th>'+labels.map(function(l){return'<th class="num">'+l+'</th>';}).join('')+'<th class="num">OFD</th><th class="num">NDR</th><th class="num">NDR %</th>';
+  var tb=$('tb-ndr');tb.innerHTML='';
+  couriers.forEach(function(c){
+    var cr=gC(c);
+    var cells=labels.map(function(l){var s=gPC(l,c);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';var o=s.filter(function(r){return r._hasOFD;});return'<td class="num">'+badgeInv(p(s.filter(function(r){return r._ndr;}).length,o.length||1),5,15)+'</td>';}).join('');
+    var cofd=cr.filter(function(r){return r._hasOFD;});var cndr=cr.filter(function(r){return r._ndr;}).length;
+    tb.innerHTML+='<tr><td><strong>'+c+'</strong></td>'+cells+'<td class="num">'+cofd.length+'</td><td class="num">'+cndr+'</td><td class="num">'+badgeInv(p(cndr,cofd.length||1),5,15)+'</td></tr>';
+  });
+  var tcN=labels.map(function(l){var s=gP(l);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';var o=s.filter(function(r){return r._hasOFD;});return'<td class="num">'+badgeInv(p(s.filter(function(r){return r._ndr;}).length,o.length||1),5,15)+'</td>';}).join('');
+  tb.innerHTML+='<tr class="total-row"><td>All</td>'+tcN+'<td class="num">'+ofdRows.length+'</td><td class="num">'+ndrCnt+'</td><td class="num">'+badgeInv(p(ndrCnt,ofdTot),5,15)+'</td></tr>';
+
+  var thZ=$('th-zrto');
+  thZ.innerHTML='<th>Courier</th>'+labels.map(function(l){return'<th class="num">'+l+'</th>';}).join('')+'<th class="num">Total RTO</th><th class="num">Z-RTO</th><th class="num">Z-RTO %</th>';
+  var tbZ=$('tb-zrto');tbZ.innerHTML='';
+  couriers.forEach(function(c){
+    var cr=gC(c);
+    var cells=labels.map(function(l){var s=gPC(l,c);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';return'<td class="num">'+badgeInv(p(s.filter(function(r){return r._zrto;}).length,s.length||1),2,8)+'</td>';}).join('');
+    var crto=cr.filter(function(r){return r._status==='RTO';}).length;var czrto=cr.filter(function(r){return r._zrto;}).length;
+    tbZ.innerHTML+='<tr><td><strong>'+c+'</strong></td>'+cells+'<td class="num">'+crto+'</td><td class="num">'+czrto+'</td><td class="num">'+badgeInv(p(czrto,cr.length||1),2,8)+'</td></tr>';
+  });
+  var totRTO=rows.filter(function(r){return r._status==='RTO';}).length;
+  var tcZ=labels.map(function(l){var s=gP(l);if(!s.length)return'<td class="num"><span class="bj n">—</span></td>';return'<td class="num">'+badgeInv(p(s.filter(function(r){return r._zrto;}).length,s.length||1),2,8)+'</td>';}).join('');
+  tbZ.innerHTML+='<tr class="total-row"><td>All</td>'+tcZ+'<td class="num">'+totRTO+'</td><td class="num">'+zrtoCnt+'</td><td class="num">'+badgeInv(p(zrtoCnt,tot),2,8)+'</td></tr>';
+}
+
+// ── Section 5: Wallet Share ───────────────────────────────────────────────────
+function renderWallet(){
+  var rows=filteredRows,tot=rows.length||1;
+  var stateMap={},cityMap={};
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var s=r._state;if(s&&s!=='Unknown'){if(!stateMap[s])stateMap[s]={tot:0,fad:0,att:0};stateMap[s].tot++;if(r._attempted)stateMap[s].att++;if(r._fad)stateMap[s].fad++;}
+    var c=r._city;if(c&&c!=='Unknown'){if(!cityMap[c])cityMap[c]=0;cityMap[c]++;}
+  }
+  $('kpi-wallet').innerHTML=kpiHTML([
+    {lbl:'Total Orders',val:tot.toLocaleString(),col:'',sub:'filtered'},
+    {lbl:'States',val:Object.keys(stateMap).length.toLocaleString(),col:'var(--blue)',sub:'unique'},
+    {lbl:'Cities',val:Object.keys(cityMap).length.toLocaleString(),col:'var(--teal)',sub:'unique'},
+  ]);
+  var states=Object.keys(stateMap).sort(function(a,b){return stateMap[b].tot-stateMap[a].tot;});
+  $('th-state').innerHTML='<th>State</th><th class="num">Orders</th><th class="num">Share</th>';
+  $('tb-state').innerHTML=states.map(function(s){var m=stateMap[s];return'<tr><td>'+s+'</td><td class="num">'+m.tot.toLocaleString()+'</td><td class="num"><span class="bj t">'+pFmt(p(m.tot,tot))+'</span></td></tr>';}).join('');
+  var cities=Object.keys(cityMap).sort(function(a,b){return cityMap[b]-cityMap[a];});
+  $('th-city').innerHTML='<th>City</th><th class="num">Orders</th><th class="num">Share</th>';
+  $('tb-city').innerHTML=cities.map(function(c){return'<tr><td>'+c+'</td><td class="num">'+cityMap[c].toLocaleString()+'</td><td class="num"><span class="bj t">'+pFmt(p(cityMap[c],tot))+'</span></td></tr>';}).join('');
+  $('th-state-fad').innerHTML='<th>State</th><th class="num">Attempted</th><th class="num">FAD</th><th class="num">FAD %</th>';
+  $('tb-state-fad').innerHTML=states.filter(function(s){return stateMap[s].att>0;}).map(function(s){var m=stateMap[s];return'<tr><td>'+s+'</td><td class="num">'+m.att.toLocaleString()+'</td><td class="num">'+m.fad.toLocaleString()+'</td><td class="num">'+badge(p(m.fad,m.att),80,60)+'</td></tr>';}).join('');
+}
+
+// ── Section 6: Pivot ─────────────────────────────────────────────────────────
+function renderPivot(){
+  var metric=$('f-pivot-metric').value||'delivery';
+  var rows=filteredRows,labels=getLabels(),couriers=getCouriers();
+  var mLbl={delivery:'Delivery %',rto:'RTO %',open:'Open %',lost:'Lost %',fad:'FAD %',sla:'SLA Adherence %',ndr:'NDR %',zrto:'Z-RTO %'};
+  var isGoodHigh=metric==='delivery'||metric==='fad'||metric==='sla';
+  $('pivot-chart-title').textContent=mLbl[metric]+' — '+periodDesc(labels);
+
+  function getVal(sub){
+    var t=sub.length||1;
+    if(metric==='delivery') return p(sub.filter(function(r){return r._status==='Delivered';}).length,t);
+    if(metric==='rto') return p(sub.filter(function(r){return r._status==='RTO';}).length,t);
+    if(metric==='open') return p(sub.filter(function(r){return r._status==='Open';}).length,t);
+    if(metric==='lost') return p(sub.filter(function(r){return r._status==='Lost';}).length,t);
+    if(metric==='fad'){var at=sub.filter(function(r){return r._attempted;});return p(at.filter(function(r){return r._fad;}).length,at.length||1);}
+    if(metric==='sla') return p(sub.filter(function(r){return r._sla==='Within SLA';}).length,t);
+    if(metric==='ndr'){var ofd=sub.filter(function(r){return r._hasOFD;});return p(sub.filter(function(r){return r._ndr;}).length,ofd.length||1);}
+    if(metric==='zrto') return p(sub.filter(function(r){return r._zrto;}).length,t);
+    return 0;
+  }
+
+  // Multi-line: one line per courier + All
+  var datasets=[{label:'All',data:labels.map(function(l){var s=gP(l);return s.length?getVal(s):null;}),borderColor:'#111',borderWidth:3,tension:0.3,pointRadius:4,pointHoverRadius:6,fill:false,spanGaps:false}];
+  couriers.forEach(function(c,i){
+    datasets.push({label:c,data:labels.map(function(l){var s=gPC(l,c);return s.length?getVal(s):null;}),borderColor:clr(i),borderWidth:2,tension:0.3,pointRadius:3,pointHoverRadius:5,fill:false,spanGaps:false,borderDash:i>6?[4,2]:[]});
+  });
+  mkChart('c-pivot-trend','line',{labels:labels,datasets:datasets},{
+    responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{display:false},datalabels:{display:false},tooltip:{callbacks:{label:function(ctx){return ctx.dataset.label+': '+pFmt(ctx.parsed.y||0);}}}},
+    scales:{x:{grid:{color:'rgba(0,0,0,0.03)'},ticks:{font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:25,minRotation:20}},y:{grid:{color:'rgba(0,0,0,0.04)'},min:0,suggestedMax:100,ticks:{font:{size:10},callback:function(v){return v+'%';}}}}
+  });
+  var legItems=[['All','#111']].concat(couriers.map(function(c,i){return[c,clr(i)];}));
+  makeLeg('leg-pivot',legItems.map(function(it){return[it[0],it[1]];}));
+
+  function bv(v,s){if(!s)return'<span class="bj n">—</span>';return isGoodHigh?badge(v,80,60):badgeInv(v,10,20);}
+  var th=$('th-pivot');
+  th.innerHTML='<th>Courier</th>'+labels.map(function(l){return'<th class="num">'+l+'</th>';}).join('')+'<th class="num">Total</th><th class="num">'+mLbl[metric]+'</th>';
+  var tb=$('tb-pivot');tb.innerHTML='';
+  couriers.forEach(function(c){
+    var cr=gC(c);
+    var cells=labels.map(function(l){var s=gPC(l,c);return'<td class="num">'+bv(getVal(s),s.length)+'</td>';}).join('');
+    tb.innerHTML+='<tr><td><strong>'+c+'</strong></td>'+cells+'<td class="num">'+cr.length.toLocaleString()+'</td><td class="num">'+bv(getVal(cr),cr.length)+'</td></tr>';
+  });
+  var tcells=labels.map(function(l){var s=gP(l);return'<td class="num">'+bv(getVal(s),s.length)+'</td>';}).join('');
+  tb.innerHTML+='<tr class="total-row"><td>All Couriers</td>'+tcells+'<td class="num">'+rows.length.toLocaleString()+'</td><td class="num">'+bv(getVal(rows),rows.length)+'</td></tr>';
+}
+
+// ── Section nav ───────────────────────────────────────────────────────────────
+function showSection(s,btn){
+  document.querySelectorAll('.section-block').forEach(function(el){el.classList.remove('active');});
+  document.querySelectorAll('.snav-btn').forEach(function(b){b.classList.remove('active');});
+  $('sec-'+s).classList.add('active');if(btn)btn.classList.add('active');
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+function hardReset(){
+  allRows=[];filteredRows=[];headers=[];weekCounts={};weekToDay={};
+  $('paste-box').value='';$('file-input').value='';
+  $('col-map-card').style.display='none';$('action-row').style.display='none';
+  $('dashboard').style.display='none';$('empty-st').style.display='block';
+  $('row-pill').textContent='No data';$('row-pill').className='pill';
+  $('data-range-sub').textContent='';
+  destroyCharts();showErr('');$('prog-wrap').style.display='none';
+}
+</script>
+</body>
+</html>
